@@ -5,12 +5,14 @@ import (
 	"time"
 )
 
-var ACTION_POTENTIAL_THRESHOLD int = 15
+var ACTION_POTENTIAL_THRESHOLD int = 30
+var DELAY_BETWEEN_FIRINGS time.Duration = 10
+var SIGNAL_BUFFER_SIZE = 2048
 
 type Neuron struct {
 	tag       string
-	dendrite  chan int  //inbound
-	synapses  []Synapse //outbound
+	dendrite  chan int  // Inbound signals
+	synapses  []Synapse // Outbound signals
 	potential int
 }
 
@@ -18,8 +20,15 @@ func (n *Neuron) Fire() {
 	log.Println(n.tag, "Fired")
 	n.potential = 0
 	for _, synapse := range n.synapses {
-		synapse.channel <- synapse.weight
-		time.Sleep(1 * time.Millisecond)
+		/* Non-blocking send, we drop signals
+		 * if the system is overwhelmed
+		 */
+		select {
+		case synapse.channel <- synapse.weight:
+		default:
+			log.Println("Signal from", n.tag, "dropped")
+		}
+		time.Sleep(DELAY_BETWEEN_FIRINGS * time.Millisecond)
 	}
 }
 
@@ -29,10 +38,8 @@ func (n *Neuron) HasReachedThreshold() bool {
 
 func (n *Neuron) Listen() {
 	for actionPotential := range n.dendrite {
-		log.Println("Received on", n.tag)
 		n.potential += actionPotential
 		if n.HasReachedThreshold() {
-			log.Println("Firing on", n.tag)
 			n.Fire()
 		}
 	}
@@ -43,5 +50,5 @@ func (n *Neuron) AddSynapse(destination *Neuron, weight int) {
 }
 
 func NewNeuron(tag string) Neuron {
-	return Neuron{tag, make(chan int), []Synapse{}, 0}
+	return Neuron{tag, make(chan int, SIGNAL_BUFFER_SIZE), []Synapse{}, 0}
 }
